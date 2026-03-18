@@ -1,62 +1,22 @@
-import nodemailer from "nodemailer";
-import dns from "node:dns";
 import { Resend } from "resend";
 
 export const WHATSAPP_LINK = "https://chat.whatsapp.com/DFjh7QeAt89IyoIpsGHrLY";
 
-/** Reusable transporter (connection pooling for high traffic) */
-const smtpHost = process.env.SMTP_HOST;
-const smtpPort = Number(process.env.SMTP_PORT) || 587;
-const smtpSecure = process.env.SMTP_SECURE === "true";
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-const smtpFrom = process.env.SMTP_FROM || smtpUser;
 const resendApiKey = process.env.RESEND_API_KEY;
-const resendFrom = process.env.RESEND_FROM || smtpFrom;
+const resendFrom = process.env.RESEND_FROM || process.env.EMAIL_FROM;
 
 const resendClient = resendApiKey ? new Resend(resendApiKey) : null;
 
-// Render (and some hosts) don't have IPv6 egress; Gmail may resolve to IPv6 first.
-// Force IPv4-first DNS resolution to avoid ENETUNREACH to IPv6 SMTP addresses.
-dns.setDefaultResultOrder("ipv4first");
-
-let transporterCache: nodemailer.Transporter | null = null;
-
-async function getTransporter(): Promise<nodemailer.Transporter> {
-  if (transporterCache) return transporterCache;
-  if (!smtpHost || !smtpUser || !smtpPass) {
-    throw new Error("SMTP is not configured on the server (missing env vars).");
-  }
-  const ips = await dns.promises.resolve4(smtpHost);
-  const host = ips[0];
-  if (!host) {
-    throw new Error(`Could not resolve SMTP host to IPv4: ${smtpHost}`);
-  }
-  transporterCache = nodemailer.createTransport({
-    host,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: { user: smtpUser, pass: smtpPass },
-    connectionTimeout: 30000,
-    greetingTimeout: 20000,
-  } as nodemailer.TransportOptions);
-  return transporterCache;
-}
-
 // In production, missing SMTP envs is the #1 reason “works locally, not deployed”.
 // We don't throw on module load to keep the API up, but we will log clearly.
-if (process.env.NODE_ENV === "production" && smtpHost) {
+if (process.env.NODE_ENV === "production") {
   const missing = [
-    !smtpHost && "SMTP_HOST",
-    !process.env.SMTP_PORT && "SMTP_PORT",
-    !smtpUser && "SMTP_USER",
-    !smtpPass && "SMTP_PASS",
     !resendApiKey && "RESEND_API_KEY",
     !resendFrom && "RESEND_FROM",
   ].filter(Boolean);
   if (missing.length > 0) {
     // eslint-disable-next-line no-console
-    console.error(`[mail] Missing SMTP env vars: ${missing.join(", ")}`);
+    console.error(`[mail] Missing email env vars: ${missing.join(", ")}`);
   }
 }
 
@@ -175,25 +135,14 @@ export async function sendReportEmail(
 
   const subject = `Your IELTS Prediction: Band ${bandRange}`;
 
-  // Prefer Resend when configured (more reliable than free SMTP on Render).
-  if (resendClient && resendFrom) {
-    await resendClient.emails.send({
-      from: resendFrom,
-      to,
-      subject,
-      text,
-      html,
-    });
-    return;
+  if (!resendClient || !resendFrom) {
+    throw new Error(
+      "Resend is not configured on the server (missing env vars).",
+    );
   }
 
-  if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
-    throw new Error("SMTP is not configured on the server (missing env vars).");
-  }
-
-  const transporter = await getTransporter();
-  await transporter.sendMail({
-    from: `"Gamlish" <${smtpFrom}>`,
+  await resendClient.emails.send({
+    from: resendFrom,
     to,
     subject,
     text,

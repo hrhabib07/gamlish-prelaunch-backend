@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import dns from "node:dns";
+import SMTPTransport from "nodemailer/lib/smtp-transport";
 
 export const WHATSAPP_LINK = "https://chat.whatsapp.com/DFjh7QeAt89IyoIpsGHrLY";
 
@@ -10,7 +12,11 @@ const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 const smtpFrom = process.env.SMTP_FROM || smtpUser;
 
-const transporter = nodemailer.createTransport({
+// Render (and some hosts) don't have IPv6 egress; Gmail may resolve to IPv6 first.
+// Force IPv4-first DNS resolution to avoid ENETUNREACH to IPv6 SMTP addresses.
+dns.setDefaultResultOrder("ipv4first");
+
+const smtpOptions: SMTPTransport.Options = {
   host: smtpHost,
   port: smtpPort,
   secure: smtpSecure,
@@ -18,7 +24,11 @@ const transporter = nodemailer.createTransport({
     user: smtpUser,
     pass: smtpPass,
   },
-});
+};
+
+// Force the SMTP transport overload to satisfy TS when @types/nodemailer is present
+const transporter =
+  nodemailer.createTransport<SMTPTransport.Options>(smtpOptions);
 
 // In production, missing SMTP envs is the #1 reason “works locally, not deployed”.
 // We don't throw on module load to keep the API up, but we will log clearly.

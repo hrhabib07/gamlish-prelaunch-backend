@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import dns from "node:dns";
+import { Resend } from "resend";
 
 export const WHATSAPP_LINK = "https://chat.whatsapp.com/DFjh7QeAt89IyoIpsGHrLY";
 
@@ -10,6 +11,10 @@ const smtpSecure = process.env.SMTP_SECURE === "true";
 const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 const smtpFrom = process.env.SMTP_FROM || smtpUser;
+const resendApiKey = process.env.RESEND_API_KEY;
+const resendFrom = process.env.RESEND_FROM || smtpFrom;
+
+const resendClient = resendApiKey ? new Resend(resendApiKey) : null;
 
 // Render (and some hosts) don't have IPv6 egress; Gmail may resolve to IPv6 first.
 // Force IPv4-first DNS resolution to avoid ENETUNREACH to IPv6 SMTP addresses.
@@ -46,6 +51,8 @@ if (process.env.NODE_ENV === "production" && smtpHost) {
     !process.env.SMTP_PORT && "SMTP_PORT",
     !smtpUser && "SMTP_USER",
     !smtpPass && "SMTP_PASS",
+    !resendApiKey && "RESEND_API_KEY",
+    !resendFrom && "RESEND_FROM",
   ].filter(Boolean);
   if (missing.length > 0) {
     // eslint-disable-next-line no-console
@@ -82,9 +89,6 @@ function bandToRange(band: string): string {
 export async function sendReportEmail(
   params: ReportEmailParams,
 ): Promise<void> {
-  if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
-    throw new Error("SMTP is not configured on the server (missing env vars).");
-  }
   const {
     to,
     bandScore,
@@ -169,11 +173,29 @@ export async function sendReportEmail(
 </html>
 `;
 
+  const subject = `Your IELTS Prediction: Band ${bandRange}`;
+
+  // Prefer Resend when configured (more reliable than free SMTP on Render).
+  if (resendClient && resendFrom) {
+    await resendClient.emails.send({
+      from: resendFrom,
+      to,
+      subject,
+      text,
+      html,
+    });
+    return;
+  }
+
+  if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
+    throw new Error("SMTP is not configured on the server (missing env vars).");
+  }
+
   const transporter = await getTransporter();
   await transporter.sendMail({
     from: `"Gamlish" <${smtpFrom}>`,
     to,
-    subject: `Your IELTS Prediction: Band ${bandRange}`,
+    subject,
     text,
     html,
   });

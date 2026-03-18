@@ -38,7 +38,5 @@ const leadSchema = new Schema<ILead>(
   { timestamps: true }
 );
 
-leadSchema.index({ email: 1 }, { unique: true });
-
 export const Lead: Model<ILead> =
   mongoose.models.Lead ?? mongoose.model<ILead>("Lead", leadSchema);

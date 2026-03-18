@@ -3,15 +3,42 @@ import nodemailer from "nodemailer";
 export const WHATSAPP_LINK = "https://chat.whatsapp.com/DFjh7QeAt89IyoIpsGHrLY";
 
 /** Reusable transporter (connection pooling for high traffic) */
+const smtpHost = process.env.SMTP_HOST;
+const smtpPort = Number(process.env.SMTP_PORT) || 587;
+const smtpSecure = process.env.SMTP_SECURE === "true";
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === "true",
+  host: smtpHost,
+  port: smtpPort,
+  secure: smtpSecure,
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: smtpUser,
+    pass: smtpPass,
   },
 });
+
+// In production, missing SMTP envs is the #1 reason “works locally, not deployed”.
+// We don't throw on module load to keep the API up, but we will log clearly.
+if (process.env.NODE_ENV === "production") {
+  const missing = [
+    !smtpHost && "SMTP_HOST",
+    !process.env.SMTP_PORT && "SMTP_PORT",
+    !smtpUser && "SMTP_USER",
+    !smtpPass && "SMTP_PASS",
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error(`[mail] Missing SMTP env vars: ${missing.join(", ")}`);
+  } else {
+    transporter.verify().catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[mail] SMTP verify failed:", err?.message || err);
+    });
+  }
+}
 
 export interface ReportEmailParams {
   to: string;
@@ -42,6 +69,9 @@ function bandToRange(band: string): string {
 export async function sendReportEmail(
   params: ReportEmailParams,
 ): Promise<void> {
+  if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
+    throw new Error("SMTP is not configured on the server (missing env vars).");
+  }
   const {
     to,
     bandScore,
@@ -127,7 +157,7 @@ export async function sendReportEmail(
 `;
 
   await transporter.sendMail({
-    from: `"Gamlish" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+    from: `"Gamlish" <${smtpFrom}>`,
     to,
     subject: `Your IELTS Prediction: Band ${bandRange}`,
     text,

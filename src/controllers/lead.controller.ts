@@ -46,8 +46,17 @@ export async function createLead(req: Request, res: Response): Promise<void> {
       { new: true, upsert: true }
     );
 
-    try {
-      await sendReportEmail({
+    res.status(201).json({
+      success: true,
+      message: "Lead saved. Report email will be sent shortly.",
+      id: lead._id,
+      attemptNumber: lead.attempts.length,
+    });
+
+    // Send email asynchronously so the API stays fast.
+    // If email sending fails, we still keep the lead + attempt (main goal: capture leads).
+    setImmediate(() => {
+      void sendReportEmail({
         to: trimmedEmail,
         bandScore: String(bandScore),
         accuracy: Number(accuracy),
@@ -55,20 +64,10 @@ export async function createLead(req: Request, res: Response): Promise<void> {
         totalTime: Number(totalTime),
         correctCount: attempt.correctCount,
         totalQuestions: attempt.totalQuestions,
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("[lead] sendReportEmail failed:", err?.message || err);
       });
-    } catch {
-      res.status(500).json({
-        success: false,
-        message: "Lead saved but email could not be sent",
-      });
-      return;
-    }
-
-    res.status(201).json({
-      success: true,
-      message: "Lead saved and report email sent",
-      id: lead._id,
-      attemptNumber: lead.attempts.length,
     });
     return;
   }

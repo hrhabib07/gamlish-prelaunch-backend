@@ -1,6 +1,5 @@
 import nodemailer from "nodemailer";
 import dns from "node:dns";
-import SMTPTransport from "nodemailer/lib/smtp-transport";
 
 export const WHATSAPP_LINK = "https://chat.whatsapp.com/DFjh7QeAt89IyoIpsGHrLY";
 
@@ -16,23 +15,32 @@ const smtpFrom = process.env.SMTP_FROM || smtpUser;
 // Force IPv4-first DNS resolution to avoid ENETUNREACH to IPv6 SMTP addresses.
 dns.setDefaultResultOrder("ipv4first");
 
-const smtpOptions: SMTPTransport.Options = {
-  host: smtpHost,
-  port: smtpPort,
-  secure: smtpSecure,
-  auth: {
-    user: smtpUser,
-    pass: smtpPass,
-  },
-};
+let transporterCache: nodemailer.Transporter | null = null;
 
-// Force the SMTP transport overload to satisfy TS when @types/nodemailer is present
-const transporter =
-  nodemailer.createTransport<SMTPTransport.Options>(smtpOptions);
+async function getTransporter(): Promise<nodemailer.Transporter> {
+  if (transporterCache) return transporterCache;
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    throw new Error("SMTP is not configured on the server (missing env vars).");
+  }
+  const ips = await dns.promises.resolve4(smtpHost);
+  const host = ips[0];
+  if (!host) {
+    throw new Error(`Could not resolve SMTP host to IPv4: ${smtpHost}`);
+  }
+  transporterCache = nodemailer.createTransport({
+    host,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: { user: smtpUser, pass: smtpPass },
+    connectionTimeout: 30000,
+    greetingTimeout: 20000,
+  } as nodemailer.TransportOptions);
+  return transporterCache;
+}
 
 // In production, missing SMTP envs is the #1 reason “works locally, not deployed”.
 // We don't throw on module load to keep the API up, but we will log clearly.
-if (process.env.NODE_ENV === "production") {
+if (process.env.NODE_ENV === "production" && smtpHost) {
   const missing = [
     !smtpHost && "SMTP_HOST",
     !process.env.SMTP_PORT && "SMTP_PORT",
@@ -42,11 +50,6 @@ if (process.env.NODE_ENV === "production") {
   if (missing.length > 0) {
     // eslint-disable-next-line no-console
     console.error(`[mail] Missing SMTP env vars: ${missing.join(", ")}`);
-  } else {
-    transporter.verify().catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error("[mail] SMTP verify failed:", err?.message || err);
-    });
   }
 }
 
@@ -166,6 +169,7 @@ export async function sendReportEmail(
 </html>
 `;
 
+  const transporter = await getTransporter();
   await transporter.sendMail({
     from: `"Gamlish" <${smtpFrom}>`,
     to,
